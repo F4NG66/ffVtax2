@@ -4,6 +4,7 @@ from collections import defaultdict
 from pybloom_live import BloomFilter
 import re
 import pickle
+import concurrent.futures
 
 class BloomFilterHandler:
     def __init__(self, kmer_size=21, factor=4):
@@ -61,10 +62,11 @@ class BloomFilterHandler:
             return len(sequence) - self.kmer_size + 1
         return 0
 
-    def load_database(self, db_path):
+    def load_database_multithreaded(self, db_path, num_threads=4):
         """
-        加载数据库文件并构建 Bloom filter。
+        加载数据库文件并构建 Bloom filter，支持多线程。
         :param db_path: 数据库文件夹的路径。
+        :param num_threads: 并行处理的线程数。
         """
         estimated_kmers = self._estimate_total_kmers_in_db(db_path)
 
@@ -74,7 +76,19 @@ class BloomFilterHandler:
         else:
             raise ValueError("Estimated k-mers count is zero. Check the database files.")
 
-        self._load_kmers_into_bloom(db_path)
+        # 使用线程池并行处理文件
+        with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = []
+            for root, _, files in os.walk(db_path):
+                for file_name in files:
+                    file_path = os.path.join(root, file_name)
+                    if file_path.endswith(('.fna', '.fna.gz', '.fasta', '.fasta.gz')):
+                        futures.append(executor.submit(self._process_file_kmers, file_path))
+
+            # 等待所有线程完成
+            concurrent.futures.wait(futures)
+
+        print(f"Total loaded k-mers across all threads.")
 
     def _estimate_total_kmers_in_db(self, db_path):
         """
